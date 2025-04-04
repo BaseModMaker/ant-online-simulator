@@ -12,6 +12,10 @@ const COLLISION_RADIUS = ANT_SIZE * 0.6; // Smaller collision radius
 const ANT_MOVE_INTERVAL = 16; // Smoother movement with faster updates
 const DIRECTION_CHANGE_PROBABILITY = 0.01; // Reduced random direction changes
 
+const PINK_MAX_DURATION = 5000; // 5 seconds max allowed in pink state
+const PINK_PERCENTAGE_THRESHOLD = 0.9; // 90% threshold for phase changing
+const PINK_MONITORING_WINDOW = 6000; // 6 second window for monitoring percentage
+
 const MazeContainer = styled('div')(({ zoom, panX, panY }) => ({
   position: 'fixed',
   top: '50%',
@@ -329,6 +333,77 @@ const Maze = ({ zoom, wallDensity, onPanChange, initialPanX = 0, initialPanY = 0
     });
   }, [ants]);
 
+  // Add function to check if a wall crosses between two points
+  const isWallBetweenPoints = useCallback((point1, point2) => {
+    // Get grid coordinates for both points
+    const grid1X = Math.floor(point1.x / CELL_SIZE);
+    const grid1Y = Math.floor(point1.y / CELL_SIZE);
+    const grid2X = Math.floor(point2.x / CELL_SIZE);
+    const grid2Y = Math.floor(point2.y / CELL_SIZE);
+    
+    // If points are in the same cell, no wall can be between them
+    if (grid1X === grid2X && grid1Y === grid2Y) {
+      return false;
+    }
+    
+    // Check horizontal walls
+    if (grid1Y !== grid2Y) {
+      const minY = Math.min(grid1Y, grid2Y);
+      const maxY = Math.max(grid1Y, grid2Y);
+      
+      // Only check walls at the boundary between cells
+      for (let y = minY + 1; y <= maxY; y++) {
+        const wallX = grid1X; // horizontal wall spans the x-coordinate
+        if (y >= 0 && y < walls.horizontal.length && 
+            wallX >= 0 && wallX < walls.horizontal[0].length) {
+          if (walls.horizontal[y][wallX]) {
+            return true;
+          }
+        }
+      }
+    }
+    
+    // Check vertical walls
+    if (grid1X !== grid2X) {
+      const minX = Math.min(grid1X, grid2X);
+      const maxX = Math.max(grid1X, grid2X);
+      
+      for (let x = minX + 1; x <= maxX; x++) {
+        const wallY = grid1Y; // vertical wall spans the y-coordinate
+        if (wallY >= 0 && wallY < walls.vertical.length && 
+            x >= 0 && x < walls.vertical[0].length) {
+          if (walls.vertical[wallY][x]) {
+            return true;
+          }
+        }
+      }
+    }
+    
+    return false;
+  }, [walls]);
+
+  // Add function to check if ant has a wall between its detection points
+  const hasWallBetweenPoints = useCallback((position, radius = COLLISION_RADIUS) => {
+    const checkPoints = [
+      { x: position.x, y: position.y }, // Center
+      { x: position.x + radius * 0.8, y: position.y }, // Right
+      { x: position.x - radius * 0.8, y: position.y }, // Left
+      { x: position.x, y: position.y + radius * 0.8 }, // Bottom
+      { x: position.x, y: position.y - radius * 0.8 }, // Top
+    ];
+    
+    // Check all pairs of points
+    for (let i = 0; i < checkPoints.length; i++) {
+      for (let j = i + 1; j < checkPoints.length; j++) {
+        if (isWallBetweenPoints(checkPoints[i], checkPoints[j])) {
+          return true;
+        }
+      }
+    }
+    
+    return false;
+  }, [isWallBetweenPoints]);
+
   // Add a visual indicator for ants in phasing mode
   useEffect(() => {
     if (ants.length === 0 && walls.horizontal.length > 0) {
@@ -361,7 +436,11 @@ const Maze = ({ zoom, wallDensity, onPanChange, initialPanX = 0, initialPanY = 0
           position: { ...startPosition }, // Clone position to avoid reference issues
           direction: direction,
           velocity: { x: 0, y: 0 },
-          phasing: false // Add phasing property to track collision state
+          phasing: false, // Add phasing property to track collision state
+          wallBetweenPoints: false,
+          insideWall: false,
+          pinkSince: null, // Timestamp when ant first entered pink state
+          pinkHistory: [], // Array of [timestamp, isPink] entries
         });
       }
       
@@ -369,37 +448,70 @@ const Maze = ({ zoom, wallDensity, onPanChange, initialPanX = 0, initialPanY = 0
     }
   }, [walls, width, height, ants.length, isValidPosition, findSafeLocation]);
 
-  // Update the movement logic to add random movement for phasing ants
+  // Update the ant movement logic to track wall-between-points
   useEffect(() => {
     if (ants.length === 0) return;
     
     const moveInterval = setInterval(() => {
+      const now = Date.now();
+      
       setAnts(currentAnts => {
         return currentAnts.map(ant => {
-          // Determine if ant is currently stuck
+          // Determine if ant is currently stuck or has wall between points
           const isStuck = isAntStuck(ant.position);
+          const wallBetweenPoints = hasWallBetweenPoints(ant.position);
           
-          // If ant is stuck, enable phasing mode
+          // Check if pink state just started
+          const justTurnedPink = wallBetweenPoints && !ant.wallBetweenPoints;
+          // Check if pink state just ended
+          const justEndedPink = !wallBetweenPoints && ant.wallBetweenPoints;
+          
+          // Update pink tracking
+          let pinkSince = ant.pinkSince;
+          let pinkHistory = [...ant.pinkHistory];
+          
+          // Record new pink state in history
+          pinkHistory.push([now, wallBetweenPoints]);
+          
+          // Remove entries older than monitoring window
+          const cutoffTime = now - PINK_MONITORING_WINDOW;
+          pinkHistory = pinkHistory.filter(entry => entry[0] >= cutoffTime);
+          
+          // Update pink start time
+          if (justTurnedPink) {
+            pinkSince = now;
+          } else if (justEndedPink) {
+            pinkSince = null;
+          }
+          
+          // Calculate pink percentage over monitoring window
+          const pinkDuration = pinkHistory.filter(entry => entry[1]).length;
+          const pinkPercentage = pinkHistory.length > 0 ? pinkDuration / pinkHistory.length : 0;
+          
+          // Check if we should force phasing due to pink state
+          const pinkTooLong = pinkSince !== null && (now - pinkSince > PINK_MAX_DURATION);
+          const pinkTooFrequent = pinkPercentage > PINK_PERCENTAGE_THRESHOLD && pinkHistory.length > 10;
+          
+          // If pink for too long or too frequent, force phasing mode
           let phasing = ant.phasing || isStuck;
-          
-          // Random direction changes - much more frequent when phasing
           let direction = ant.direction;
+          if ((pinkTooLong || pinkTooFrequent) && wallBetweenPoints) {
+            phasing = true;
+            // Pick a random direction to help escape
+            direction = Math.floor(Math.random() * 360);
+          }
           
           if (phasing) {
-            // Phasing ants have 35% chance to change direction dramatically
             if (Math.random() < 0.35) {
-              // Random direction between 0-360 degrees for phasing ants
               direction = Math.floor(Math.random() * 360);
             }
           } else {
-            // Normal ants have regular small direction changes
             if (Math.random() < DIRECTION_CHANGE_PROBABILITY) {
               direction = (direction + Math.floor(Math.random() * 40 - 20)) % 360;
               if (direction < 0) direction += 360;
             }
           }
           
-          // Calculate movement - phasing ants move slightly faster to escape
           const speedMultiplier = phasing ? 1.5 : 1.0;
           const radians = direction * Math.PI / 180;
           const velocityX = Math.cos(radians) * ANT_SPEED * speedMultiplier;
@@ -410,16 +522,16 @@ const Maze = ({ zoom, wallDensity, onPanChange, initialPanX = 0, initialPanY = 0
             y: ant.position.y + velocityY
           };
           
-          // Only check collisions if not in phasing mode
+          // Check if new position will have wall between points
+          const newWallBetweenPoints = hasWallBetweenPoints(newPosition);
+          
+          // Rest of the collision handling remains the same
           const isValid = phasing ? true : isValidPosition(newPosition.x, newPosition.y, COLLISION_RADIUS);
           const hasAntCollision = phasing ? false : checkAntCollision(ant, newPosition);
           
-          // If collision detected and not phasing, try to find a new direction
           if (!phasing && (!isValid || hasAntCollision)) {
-            // Existing collision handling...
             const possibleDirections = [];
             
-            // Try different directions
             for (let angle = 0; angle < 360; angle += 45) {
               const testDirection = (direction + 180 + angle) % 360;
               const testRadians = testDirection * Math.PI / 180;
@@ -442,43 +554,48 @@ const Maze = ({ zoom, wallDensity, onPanChange, initialPanX = 0, initialPanY = 0
               return {
                 ...ant,
                 direction: newDirection,
-                phasing: false
+                phasing: false,
+                wallBetweenPoints: newWallBetweenPoints,
+                pinkSince: newWallBetweenPoints ? (ant.pinkSince || now) : null,
+                pinkHistory
               };
             } else {
-              // No valid direction found - enter phasing mode with random direction
               const newDirection = Math.floor(Math.random() * 360);
               return {
                 ...ant,
                 direction: newDirection,
-                phasing: true
+                phasing: true,
+                wallBetweenPoints: newWallBetweenPoints,
+                pinkSince: newWallBetweenPoints ? (ant.pinkSince || now) : null,
+                pinkHistory
               };
             }
           }
           
-          // If phasing, check if ant is now free from collisions
           if (phasing) {
             const nowValid = isValidPosition(newPosition.x, newPosition.y, COLLISION_RADIUS);
             const nowNoCollision = !checkAntCollision(ant, newPosition);
             
-            // If we're clear, disable phasing
             if (nowValid && nowNoCollision) {
               phasing = false;
             }
           }
           
-          // Move the ant
           return {
             ...ant,
             position: newPosition,
             direction,
-            phasing
+            phasing,
+            wallBetweenPoints: newWallBetweenPoints,
+            pinkSince: newWallBetweenPoints ? (pinkSince || now) : null,
+            pinkHistory
           };
         });
       });
     }, ANT_MOVE_INTERVAL);
     
     return () => clearInterval(moveInterval);
-  }, [ants.length, isValidPosition, checkAntCollision, isAntStuck]);
+  }, [ants.length, isValidPosition, checkAntCollision, isAntStuck, hasWallBetweenPoints]);
 
   return (
     <MazeContainer 
@@ -534,6 +651,8 @@ const Maze = ({ zoom, wallDensity, onPanChange, initialPanX = 0, initialPanY = 0
           height={ANT_SIZE}
           showCollisionSphere={showCollisionSpheres}
           phasing={ant.phasing}
+          insideWall={ant.insideWall}
+          wallBetweenPoints={ant.wallBetweenPoints}
         />
       ))}
     </MazeContainer>

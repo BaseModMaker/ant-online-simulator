@@ -5,7 +5,7 @@ import Sidebar from './Sidebar';
 
 const Homepage = () => {
   const [zoom, setZoom] = useState(1);
-  const [wallDensity, setWallDensity] = useState(70);
+  const [wallDensity, setWallDensity] = useState(50);
   const [panPosition, setPanPosition] = useState({ x: 0, y: 0 });
   const [showCollisionSpheres, setShowCollisionSpheres] = useState(false);
   const frameRef = useRef();
