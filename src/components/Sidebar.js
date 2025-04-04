@@ -8,6 +8,8 @@ import SettingsIcon from '@mui/icons-material/Settings';
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
 import ZoomOutMapIcon from '@mui/icons-material/ZoomOutMap';
 import CenterFocusStrongIcon from '@mui/icons-material/CenterFocusStrong';
+import VisibilityIcon from '@mui/icons-material/Visibility';
+import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 
 // Replace with MUI GlobalStyles
 const globalStyles = {
@@ -110,7 +112,9 @@ const Sidebar = ({
   wallDensity, 
   onWallDensityChange, 
   onCenterMap,
-  isMapCentered 
+  isMapCentered,
+  showCollisionSpheres,
+  onToggleCollisionSpheres
 }) => {
   const [open, setOpen] = React.useState(false);
   const isZoomed = zoom !== 1;
@@ -141,12 +145,14 @@ const Sidebar = ({
     if (sidebar) {
       sidebar.addEventListener('wheel', preventScroll, { passive: false });
       sidebar.addEventListener('touchmove', preventScroll, { passive: false });
+      sidebar.addEventListener('scroll', preventScroll, { passive: false });
     }
     
     return () => {
       if (sidebar) {
         sidebar.removeEventListener('wheel', preventScroll);
         sidebar.removeEventListener('touchmove', preventScroll);
+        sidebar.removeEventListener('scroll', preventScroll);
       }
     };
   }, [open]);
@@ -190,6 +196,13 @@ const Sidebar = ({
               style={{ pointerEvents: isMapCentered ? 'none' : 'auto' }} // Additional style to ensure clickability
             >
               Center Map
+            </ResetButton>
+            <ResetButton
+              variant="contained"
+              onClick={onToggleCollisionSpheres}
+              startIcon={showCollisionSpheres ? <VisibilityOffIcon /> : <VisibilityIcon />}
+            >
+              {showCollisionSpheres ? "Hide" : "Show"} Collision Spheres
             </ResetButton>
           </SliderContainer>
         </Controls>

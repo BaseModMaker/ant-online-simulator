@@ -7,6 +7,7 @@ const Homepage = () => {
   const [zoom, setZoom] = useState(1);
   const [wallDensity, setWallDensity] = useState(70);
   const [panPosition, setPanPosition] = useState({ x: 0, y: 0 });
+  const [showCollisionSpheres, setShowCollisionSpheres] = useState(false);
   const frameRef = useRef();
   const prevTimeRef = useRef(0);
 
@@ -42,6 +43,10 @@ const Homepage = () => {
     );
   }, []); // Remove panPosition from the log to avoid the dependency
 
+  const handleToggleCollisionSpheres = useCallback(() => {
+    setShowCollisionSpheres(prev => !prev);
+  }, []);
+
   // Set a more reasonable threshold - 5 might be too small
   const isMapCentered = Math.abs(panPosition.x) < 10 && Math.abs(panPosition.y) < 10;
 
@@ -70,6 +75,7 @@ const Homepage = () => {
         zoom={zoom} 
         wallDensity={wallDensity}
         onPanChange={setPanPosition}
+        showCollisionSpheres={showCollisionSpheres}
       />
       <Sidebar
         zoom={zoom}
@@ -78,6 +84,8 @@ const Homepage = () => {
         onWallDensityChange={setWallDensity}
         onCenterMap={handleCenterMap}
         isMapCentered={isMapCentered}
+        showCollisionSpheres={showCollisionSpheres}
+        onToggleCollisionSpheres={handleToggleCollisionSpheres}
       />
     </BlueprintBackground>
   );

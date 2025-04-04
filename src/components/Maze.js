@@ -6,10 +6,11 @@ const CELL_SIZE = 40;
 const WALL_THICKNESS = 8;
 
 const ANT_COUNT = 5;
-const ANT_SPEED = 1;
+const ANT_SPEED = 1.5; // Increased speed
 const ANT_SIZE = 20;
-const ANT_MOVE_INTERVAL = 50; // ms between movement updates
-const DIRECTION_CHANGE_PROBABILITY = 0.05; // chance to change direction randomly
+const COLLISION_RADIUS = ANT_SIZE * 0.6; // Smaller collision radius
+const ANT_MOVE_INTERVAL = 16; // Smoother movement with faster updates
+const DIRECTION_CHANGE_PROBABILITY = 0.01; // Reduced random direction changes
 
 const MazeContainer = styled('div')(({ zoom, panX, panY }) => ({
   position: 'fixed',
@@ -124,7 +125,7 @@ function generateBaseMaze(width, height) {
   };
 }
 
-const Maze = ({ zoom, wallDensity, onPanChange, initialPanX = 0, initialPanY = 0 }) => {
+const Maze = ({ zoom, wallDensity, onPanChange, initialPanX = 0, initialPanY = 0, showCollisionSpheres = false }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [panPosition, setPanPosition] = useState({ x: initialPanX, y: initialPanY });
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
@@ -214,32 +215,112 @@ const Maze = ({ zoom, wallDensity, onPanChange, initialPanX = 0, initialPanY = 0
     return result;
   }, [baseMaze, wallDensity, width, height]);
 
-  const isValidPosition = useCallback((x, y) => {
-    const gridX = Math.floor(x / CELL_SIZE);
-    const gridY = Math.floor(y / CELL_SIZE);
+  const isValidPosition = useCallback((x, y, radius = COLLISION_RADIUS) => {
+    const checkPoints = [
+      { x, y }, // Center
+      { x: x + radius * 0.8, y }, // Right
+      { x: x - radius * 0.8, y }, // Left
+      { x, y: y + radius * 0.8 }, // Bottom
+      { x, y: y - radius * 0.8 }, // Top
+    ];
     
-    if (y % CELL_SIZE < WALL_THICKNESS || y % CELL_SIZE > CELL_SIZE - WALL_THICKNESS) {
-      if (gridY >= 0 && gridY < walls.horizontal.length && 
-          gridX >= 0 && gridX < walls.horizontal[0].length) {
-        if (walls.horizontal[gridY][gridX]) return false;
+    for (const point of checkPoints) {
+      const gridX = Math.floor(point.x / CELL_SIZE);
+      const gridY = Math.floor(point.y / CELL_SIZE);
+      
+      if (Math.abs(point.y % CELL_SIZE) < WALL_THICKNESS || 
+          Math.abs(point.y % CELL_SIZE - CELL_SIZE) < WALL_THICKNESS) {
+        if (gridY >= 0 && gridY < walls.horizontal.length && 
+            gridX >= 0 && gridX < walls.horizontal[0].length) {
+          if (walls.horizontal[gridY][gridX]) return false;
+        }
       }
-    }
-    
-    if (x % CELL_SIZE < WALL_THICKNESS || x % CELL_SIZE > CELL_SIZE - WALL_THICKNESS) {
-      if (gridY >= 0 && gridY < walls.vertical.length && 
-          gridX >= 0 && gridX < walls.vertical[0].length) {
-        if (walls.vertical[gridY][gridX]) return false;
+      
+      if (Math.abs(point.x % CELL_SIZE) < WALL_THICKNESS || 
+          Math.abs(point.x % CELL_SIZE - CELL_SIZE) < WALL_THICKNESS) {
+        if (gridY >= 0 && gridY < walls.vertical.length && 
+            gridX >= 0 && gridX < walls.vertical[0].length) {
+          if (walls.vertical[gridY][gridX]) return false;
+        }
       }
     }
     
     return true;
   }, [walls]);
 
+  const isAntStuck = useCallback((position) => {
+    const gridX = Math.floor(position.x / CELL_SIZE);
+    const gridY = Math.floor(position.y / CELL_SIZE);
+    
+    if (position.y % CELL_SIZE < WALL_THICKNESS || 
+        position.y % CELL_SIZE > CELL_SIZE - WALL_THICKNESS) {
+      if (gridY >= 0 && gridY < walls.horizontal.length && 
+          gridX >= 0 && gridX < walls.horizontal[0].length) {
+        if (walls.horizontal[gridY][gridX]) return true;
+      }
+    }
+    
+    if (position.x % CELL_SIZE < WALL_THICKNESS || 
+        position.x % CELL_SIZE > CELL_SIZE - WALL_THICKNESS) {
+      if (gridY >= 0 && gridY < walls.vertical.length && 
+          gridX >= 0 && gridX < walls.vertical[0].length) {
+        if (walls.vertical[gridY][gridX]) return true;
+      }
+    }
+    
+    return false;
+  }, [walls]);
+
+  const findSafeLocation = useCallback((position) => {
+    const cellX = Math.floor(position.x / CELL_SIZE);
+    const cellY = Math.floor(position.y / CELL_SIZE);
+    
+    const centerX = cellX * CELL_SIZE + CELL_SIZE/2;
+    const centerY = cellY * CELL_SIZE + CELL_SIZE/2;
+    
+    if (!isAntStuck({ x: centerX, y: centerY })) {
+      return { x: centerX, y: centerY };
+    }
+    
+    for (let offsetX = -10; offsetX <= 10; offsetX += 5) {
+      for (let offsetY = -10; offsetY <= 10; offsetY += 5) {
+        const testX = centerX + offsetX;
+        const testY = centerY + offsetY;
+        if (!isAntStuck({ x: testX, y: testY })) {
+          return { x: testX, y: testY };
+        }
+      }
+    }
+    
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        if (dx === 0 && dy === 0) continue;
+        
+        const adjCellX = (cellX + dx) * CELL_SIZE + CELL_SIZE/2;
+        const adjCellY = (cellY + dy) * CELL_SIZE + CELL_SIZE/2;
+        
+        if (!isAntStuck({ x: adjCellX, y: adjCellY })) {
+          return { x: adjCellX, y: adjCellY };
+        }
+      }
+    }
+    
+    return {
+      x: Math.floor(Math.random() * width) * CELL_SIZE + CELL_SIZE/2,
+      y: Math.floor(Math.random() * height) * CELL_SIZE + CELL_SIZE/2
+    };
+  }, [isAntStuck, width, height]);
+
   const checkAntCollision = useCallback((ant, newPosition) => {
-    return ants.some(otherAnt => 
-      otherAnt.id !== ant.id && 
-      Math.hypot(newPosition.x - otherAnt.position.x, newPosition.y - otherAnt.position.y) < ANT_SIZE
-    );
+    return ants.some(otherAnt => {
+      if (otherAnt.id === ant.id) return false;
+      
+      const dx = newPosition.x - otherAnt.position.x;
+      const dy = newPosition.y - otherAnt.position.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      
+      return distance < COLLISION_RADIUS * 1.5;
+    });
   }, [ants]);
 
   useEffect(() => {
@@ -253,11 +334,13 @@ const Maze = ({ zoom, wallDensity, onPanChange, initialPanX = 0, initialPanY = 0
         
         while (!validPosition && attempts < 100) {
           attempts++;
-          const x = Math.floor(Math.random() * width * CELL_SIZE);
-          const y = Math.floor(Math.random() * height * CELL_SIZE);
+          const cellX = Math.floor(Math.random() * width);
+          const cellY = Math.floor(Math.random() * height);
+          const x = cellX * CELL_SIZE + CELL_SIZE/2 + (Math.random() * 10 - 5);
+          const y = cellY * CELL_SIZE + CELL_SIZE/2 + (Math.random() * 10 - 5);
           position = { x, y };
           
-          validPosition = isValidPosition(x, y) && 
+          validPosition = isValidPosition(x, y, COLLISION_RADIUS * 1.5) && 
             !newAnts.some(ant => 
               Math.hypot(x - ant.position.x, y - ant.position.y) < ANT_SIZE * 2);
         }
@@ -281,10 +364,10 @@ const Maze = ({ zoom, wallDensity, onPanChange, initialPanX = 0, initialPanY = 0
     
     const moveInterval = setInterval(() => {
       setAnts(currentAnts => {
-        return currentAnts.map(ant => {
+        const updatedAnts = currentAnts.map(ant => {
           let direction = ant.direction;
           if (Math.random() < DIRECTION_CHANGE_PROBABILITY) {
-            direction = (direction + Math.floor(Math.random() * 60 - 30)) % 360;
+            direction = (direction + Math.floor(Math.random() * 40 - 20)) % 360;
             if (direction < 0) direction += 360;
           }
           
@@ -297,15 +380,42 @@ const Maze = ({ zoom, wallDensity, onPanChange, initialPanX = 0, initialPanY = 0
             y: ant.position.y + velocityY
           };
           
-          const isValid = isValidPosition(newPosition.x, newPosition.y);
+          const isValid = isValidPosition(newPosition.x, newPosition.y, COLLISION_RADIUS);
           const hasAntCollision = checkAntCollision(ant, newPosition);
           
           if (!isValid || hasAntCollision) {
-            const newDirection = (direction + 180 + Math.floor(Math.random() * 60 - 30)) % 360;
-            return {
-              ...ant,
-              direction: newDirection,
-            };
+            const possibleDirections = [];
+            
+            for (let angle = 0; angle < 360; angle += 45) {
+              const testDirection = (direction + 180 + angle) % 360;
+              const testRadians = testDirection * Math.PI / 180;
+              const testVelocityX = Math.cos(testRadians) * ANT_SPEED;
+              const testVelocityY = Math.sin(testRadians) * ANT_SPEED;
+              
+              const testPosition = {
+                x: ant.position.x + testVelocityX,
+                y: ant.position.y + testVelocityY
+              };
+              
+              if (isValidPosition(testPosition.x, testPosition.y, COLLISION_RADIUS) && 
+                  !checkAntCollision(ant, testPosition)) {
+                possibleDirections.push(testDirection);
+              }
+            }
+            
+            if (possibleDirections.length > 0) {
+              const newDirection = possibleDirections[Math.floor(Math.random() * possibleDirections.length)];
+              return {
+                ...ant,
+                direction: newDirection
+              };
+            } else {
+              const newDirection = Math.floor(Math.random() * 360);
+              return {
+                ...ant,
+                direction: newDirection
+              };
+            }
           }
           
           return {
@@ -314,11 +424,25 @@ const Maze = ({ zoom, wallDensity, onPanChange, initialPanX = 0, initialPanY = 0
             direction,
           };
         });
+        
+        return updatedAnts.map(ant => {
+          if (isAntStuck(ant.position)) {
+            console.log("Ant", ant.id, "is stuck! Moving to safe location.");
+            const safePosition = findSafeLocation(ant.position);
+            const newDirection = Math.floor(Math.random() * 360);
+            return {
+              ...ant,
+              position: safePosition,
+              direction: newDirection
+            };
+          }
+          return ant;
+        });
       });
     }, ANT_MOVE_INTERVAL);
     
     return () => clearInterval(moveInterval);
-  }, [ants.length, isValidPosition, checkAntCollision]);
+  }, [ants.length, isValidPosition, checkAntCollision, isAntStuck, findSafeLocation]);
 
   return (
     <MazeContainer 
@@ -370,6 +494,9 @@ const Maze = ({ zoom, wallDensity, onPanChange, initialPanX = 0, initialPanY = 0
           id={ant.id}
           position={ant.position}
           rotation={ant.direction}
+          width={ANT_SIZE}
+          height={ANT_SIZE}
+          showCollisionSphere={showCollisionSpheres}
         />
       ))}
     </MazeContainer>
