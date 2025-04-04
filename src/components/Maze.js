@@ -5,7 +5,7 @@ import Ant from './Ant';
 const CELL_SIZE = 40;
 const WALL_THICKNESS = 8;
 
-const ANT_COUNT = 5;
+const ANT_COUNT = 50;
 const ANT_SPEED = 1.5; // Increased speed
 const ANT_SIZE = 20;
 const COLLISION_RADIUS = ANT_SIZE * 0.6; // Smaller collision radius
@@ -323,69 +323,97 @@ const Maze = ({ zoom, wallDensity, onPanChange, initialPanX = 0, initialPanY = 0
     });
   }, [ants]);
 
+  // Add a visual indicator for ants in phasing mode
   useEffect(() => {
     if (ants.length === 0 && walls.horizontal.length > 0) {
       const newAnts = [];
       
+      // Define a single starting position (center of the maze)
+      const centerCellX = Math.floor(width / 2);
+      const centerCellY = Math.floor(height / 2);
+      const startX = centerCellX * CELL_SIZE + CELL_SIZE/2;
+      const startY = centerCellY * CELL_SIZE + CELL_SIZE/2;
+      
+      // Check if center position is valid, otherwise find nearest safe spot
+      let startPosition;
+      if (isValidPosition(startX, startY, COLLISION_RADIUS)) {
+        startPosition = { x: startX, y: startY };
+      } else {
+        // Use findSafeLocation to get a valid position
+        startPosition = findSafeLocation({ x: startX, y: startY });
+      }
+      
+      console.log("Spawning all ants at:", startPosition);
+      
+      // Create all ants at the same position but with different directions
       for (let i = 0; i < ANT_COUNT; i++) {
-        let validPosition = false;
-        let position;
-        let attempts = 0;
+        // Give each ant a different direction (spread around 360 degrees)
+        const direction = (i * (360 / ANT_COUNT)) % 360;
         
-        while (!validPosition && attempts < 100) {
-          attempts++;
-          const cellX = Math.floor(Math.random() * width);
-          const cellY = Math.floor(Math.random() * height);
-          const x = cellX * CELL_SIZE + CELL_SIZE/2 + (Math.random() * 10 - 5);
-          const y = cellY * CELL_SIZE + CELL_SIZE/2 + (Math.random() * 10 - 5);
-          position = { x, y };
-          
-          validPosition = isValidPosition(x, y, COLLISION_RADIUS * 1.5) && 
-            !newAnts.some(ant => 
-              Math.hypot(x - ant.position.x, y - ant.position.y) < ANT_SIZE * 2);
-        }
-        
-        if (validPosition) {
-          newAnts.push({
-            id: i,
-            position,
-            direction: Math.floor(Math.random() * 360),
-            velocity: { x: 0, y: 0 }
-          });
-        }
+        newAnts.push({
+          id: i,
+          position: { ...startPosition }, // Clone position to avoid reference issues
+          direction: direction,
+          velocity: { x: 0, y: 0 },
+          phasing: false // Add phasing property to track collision state
+        });
       }
       
       setAnts(newAnts);
     }
-  }, [walls, width, height, ants.length, isValidPosition]);
+  }, [walls, width, height, ants.length, isValidPosition, findSafeLocation]);
 
+  // Update the movement logic to add random movement for phasing ants
   useEffect(() => {
     if (ants.length === 0) return;
     
     const moveInterval = setInterval(() => {
       setAnts(currentAnts => {
-        const updatedAnts = currentAnts.map(ant => {
+        return currentAnts.map(ant => {
+          // Determine if ant is currently stuck
+          const isStuck = isAntStuck(ant.position);
+          
+          // If ant is stuck, enable phasing mode
+          let phasing = ant.phasing || isStuck;
+          
+          // Random direction changes - much more frequent when phasing
           let direction = ant.direction;
-          if (Math.random() < DIRECTION_CHANGE_PROBABILITY) {
-            direction = (direction + Math.floor(Math.random() * 40 - 20)) % 360;
-            if (direction < 0) direction += 360;
+          
+          if (phasing) {
+            // Phasing ants have 35% chance to change direction dramatically
+            if (Math.random() < 0.35) {
+              // Random direction between 0-360 degrees for phasing ants
+              direction = Math.floor(Math.random() * 360);
+            }
+          } else {
+            // Normal ants have regular small direction changes
+            if (Math.random() < DIRECTION_CHANGE_PROBABILITY) {
+              direction = (direction + Math.floor(Math.random() * 40 - 20)) % 360;
+              if (direction < 0) direction += 360;
+            }
           }
           
+          // Calculate movement - phasing ants move slightly faster to escape
+          const speedMultiplier = phasing ? 1.5 : 1.0;
           const radians = direction * Math.PI / 180;
-          const velocityX = Math.cos(radians) * ANT_SPEED;
-          const velocityY = Math.sin(radians) * ANT_SPEED;
+          const velocityX = Math.cos(radians) * ANT_SPEED * speedMultiplier;
+          const velocityY = Math.sin(radians) * ANT_SPEED * speedMultiplier;
           
           const newPosition = {
             x: ant.position.x + velocityX,
             y: ant.position.y + velocityY
           };
           
-          const isValid = isValidPosition(newPosition.x, newPosition.y, COLLISION_RADIUS);
-          const hasAntCollision = checkAntCollision(ant, newPosition);
+          // Only check collisions if not in phasing mode
+          const isValid = phasing ? true : isValidPosition(newPosition.x, newPosition.y, COLLISION_RADIUS);
+          const hasAntCollision = phasing ? false : checkAntCollision(ant, newPosition);
           
-          if (!isValid || hasAntCollision) {
+          // If collision detected and not phasing, try to find a new direction
+          if (!phasing && (!isValid || hasAntCollision)) {
+            // Existing collision handling...
             const possibleDirections = [];
             
+            // Try different directions
             for (let angle = 0; angle < 360; angle += 45) {
               const testDirection = (direction + 180 + angle) % 360;
               const testRadians = testDirection * Math.PI / 180;
@@ -407,42 +435,44 @@ const Maze = ({ zoom, wallDensity, onPanChange, initialPanX = 0, initialPanY = 0
               const newDirection = possibleDirections[Math.floor(Math.random() * possibleDirections.length)];
               return {
                 ...ant,
-                direction: newDirection
+                direction: newDirection,
+                phasing: false
               };
             } else {
+              // No valid direction found - enter phasing mode with random direction
               const newDirection = Math.floor(Math.random() * 360);
               return {
                 ...ant,
-                direction: newDirection
+                direction: newDirection,
+                phasing: true
               };
             }
           }
           
+          // If phasing, check if ant is now free from collisions
+          if (phasing) {
+            const nowValid = isValidPosition(newPosition.x, newPosition.y, COLLISION_RADIUS);
+            const nowNoCollision = !checkAntCollision(ant, newPosition);
+            
+            // If we're clear, disable phasing
+            if (nowValid && nowNoCollision) {
+              phasing = false;
+            }
+          }
+          
+          // Move the ant
           return {
             ...ant,
             position: newPosition,
             direction,
+            phasing
           };
-        });
-        
-        return updatedAnts.map(ant => {
-          if (isAntStuck(ant.position)) {
-            console.log("Ant", ant.id, "is stuck! Moving to safe location.");
-            const safePosition = findSafeLocation(ant.position);
-            const newDirection = Math.floor(Math.random() * 360);
-            return {
-              ...ant,
-              position: safePosition,
-              direction: newDirection
-            };
-          }
-          return ant;
         });
       });
     }, ANT_MOVE_INTERVAL);
     
     return () => clearInterval(moveInterval);
-  }, [ants.length, isValidPosition, checkAntCollision, isAntStuck, findSafeLocation]);
+  }, [ants.length, isValidPosition, checkAntCollision, isAntStuck]);
 
   return (
     <MazeContainer 
@@ -497,6 +527,7 @@ const Maze = ({ zoom, wallDensity, onPanChange, initialPanX = 0, initialPanY = 0
           width={ANT_SIZE}
           height={ANT_SIZE}
           showCollisionSphere={showCollisionSpheres}
+          phasing={ant.phasing}
         />
       ))}
     </MazeContainer>
