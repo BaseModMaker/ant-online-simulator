@@ -283,7 +283,7 @@ const Maze = ({ zoom, wallDensity, onPanChange, initialPanX = 0, initialPanY = 0
     }
     
     for (let offsetX = -10; offsetX <= 10; offsetX += 5) {
-      for (let offsetY = -10; offsetY <= 10; offsetY += 5) {
+      for (let offsetY = -10; offsetY <= 10; ) {
         const testX = centerX + offsetX;
         const testY = centerY + offsetY;
         if (!isAntStuck({ x: testX, y: testY })) {
@@ -313,12 +313,18 @@ const Maze = ({ zoom, wallDensity, onPanChange, initialPanX = 0, initialPanY = 0
 
   const checkAntCollision = useCallback((ant, newPosition) => {
     return ants.some(otherAnt => {
+      // Skip self-collision check
       if (otherAnt.id === ant.id) return false;
       
+      // If the other ant is phasing, it shouldn't block this ant's movement
+      if (otherAnt.phasing) return false;
+      
+      // Calculate distance between ants
       const dx = newPosition.x - otherAnt.position.x;
       const dy = newPosition.y - otherAnt.position.y;
       const distance = Math.sqrt(dx * dx + dy * dy);
       
+      // Collision detected if distance is less than the combined radii
       return distance < COLLISION_RADIUS * 1.5;
     });
   }, [ants]);
