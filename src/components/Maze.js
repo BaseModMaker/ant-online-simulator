@@ -4,17 +4,26 @@ import { styled } from '@mui/material/styles';
 const CELL_SIZE = 40;
 const WALL_THICKNESS = 8;
 
-const MazeContainer = styled('div')(({ zoom }) => ({
+const MazeContainer = styled('div')(({ zoom, panX, panY }) => ({
   position: 'fixed',
-  top: 0,
-  left: 0,
+  top: '50%',
+  left: '50%',
   width: '100vw',
   height: '100vh',
-  transform: `scale(${zoom})`,
+  transform: `translate(calc(-50% + ${panX}px), calc(-50% + ${panY}px)) scale(${zoom})`,
   transformOrigin: 'center center',
   display: 'flex',
   justifyContent: 'center',
   alignItems: 'center',
+  pointerEvents: 'all', // Enable pointer events for dragging
+  cursor: 'grab',
+  '&:active': {
+    cursor: 'grabbing'
+  },
+  willChange: 'transform',
+  backfaceVisibility: 'hidden',
+  WebkitFontSmoothing: 'antialiased',
+  perspective: 1000,
 }));
 
 const Cell = styled('div')({
@@ -40,6 +49,10 @@ const Wall = styled('div')(({ isHorizontal }) => ({
   width: isHorizontal ? CELL_SIZE : WALL_THICKNESS,
   height: isHorizontal ? WALL_THICKNESS : CELL_SIZE,
 }));
+
+const WallMemo = React.memo(({ isHorizontal, style }) => (
+  <Wall isHorizontal={isHorizontal} style={style} />
+));
 
 function generateBaseMaze(width, height) {
   // Initialize walls
@@ -110,10 +123,63 @@ function generateBaseMaze(width, height) {
   };
 }
 
-const Maze = ({ zoom, wallDensity }) => {
+const Maze = ({ zoom, wallDensity, onPanChange, initialPanX = 0, initialPanY = 0 }) => {
+  const [isDragging, setIsDragging] = React.useState(false);
+  const [panPosition, setPanPosition] = React.useState({ x: initialPanX, y: initialPanY });
+  const [dragStart, setDragStart] = React.useState({ x: 0, y: 0 });
   const width = Math.floor(window.innerWidth / CELL_SIZE);
   const height = Math.floor(window.innerHeight / CELL_SIZE);
-  
+
+  const handleMouseDown = (e) => {
+    setIsDragging(true);
+    setDragStart({ 
+      x: e.clientX - panPosition.x, 
+      y: e.clientY - panPosition.y 
+    });
+  };
+
+  const handleMouseMove = React.useCallback((e) => {
+    if (isDragging) {
+      const newPos = {
+        x: e.clientX - dragStart.x,
+        y: e.clientY - dragStart.y
+      };
+      
+      setPanPosition(newPos);
+      if (onPanChange) {
+        onPanChange(newPos); // Make sure to call this to update parent state
+      }
+    }
+  }, [isDragging, dragStart, onPanChange]);
+
+  const handleMouseUp = () => {
+    setIsDragging(false);
+  };
+
+  React.useEffect(() => {
+    if (isDragging) {
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+      return () => {
+        window.removeEventListener('mousemove', handleMouseMove);
+        window.removeEventListener('mouseup', handleMouseUp);
+      };
+    }
+  }, [isDragging, handleMouseMove]);
+
+  React.useEffect(() => {
+    // Create a listener for a custom event that Homepage can dispatch
+    const handleExternalPanChange = (e) => {
+      const { x, y } = e.detail;
+      setPanPosition({ x, y });
+    };
+    
+    window.addEventListener('centerMap', handleExternalPanChange);
+    return () => {
+      window.removeEventListener('centerMap', handleExternalPanChange);
+    };
+  }, []);
+
   const [baseMaze, setBaseMaze] = React.useState(() => generateBaseMaze(width, height));
 
   React.useEffect(() => {
@@ -122,28 +188,41 @@ const Maze = ({ zoom, wallDensity }) => {
 
   const walls = React.useMemo(() => {
     const result = {
-      horizontal: baseMaze.structure.horizontal.map(row => [...row]),
-      vertical: baseMaze.structure.vertical.map(row => [...row])
+      horizontal: baseMaze.structure.horizontal.map((row, y) => 
+        row.map((_, x) => y === 0 || y === height)), // Only keep top and bottom walls
+      vertical: baseMaze.structure.vertical.map((row, y) => 
+        row.map((_, x) => x === 0 || x === width)) // Only keep left and right walls
     };
 
-    // Calculate number of walls to remove
-    const numWallsToRemove = Math.floor(baseMaze.remainingWalls.length * (1 - wallDensity / 100));
+    if (wallDensity > 0) {
+      // Reset to base maze structure
+      result.horizontal = baseMaze.structure.horizontal.map(row => [...row]);
+      result.vertical = baseMaze.structure.vertical.map(row => [...row]);
 
-    // Remove walls in consistent order
-    for (let i = 0; i < numWallsToRemove; i++) {
-      const wall = baseMaze.remainingWalls[i];
-      if (wall.type === 'horizontal') {
-        result.horizontal[wall.y][wall.x] = false;
-      } else {
-        result.vertical[wall.y][wall.x] = false;
+      // Calculate number of walls to remove
+      const numWallsToRemove = Math.floor(baseMaze.remainingWalls.length * (1 - wallDensity / 100));
+
+      // Remove walls in consistent order
+      for (let i = 0; i < numWallsToRemove; i++) {
+        const wall = baseMaze.remainingWalls[i];
+        if (wall.type === 'horizontal') {
+          result.horizontal[wall.y][wall.x] = false;
+        } else {
+          result.vertical[wall.y][wall.x] = false;
+        }
       }
     }
 
     return result;
-  }, [baseMaze, wallDensity]);
+  }, [baseMaze, wallDensity, width, height]);
 
   return (
-    <MazeContainer zoom={zoom}>
+    <MazeContainer 
+      zoom={zoom}
+      panX={panPosition.x}
+      panY={panPosition.y}
+      onMouseDown={handleMouseDown}
+    >
       {/* Render cells */}
       {Array(height).fill().map((_, y) =>
         Array(width).fill().map((_, x) => (
@@ -160,7 +239,7 @@ const Maze = ({ zoom, wallDensity }) => {
       {/* Render horizontal walls */}
       {walls.horizontal.map((row, y) =>
         row.map((wall, x) => wall && (
-          <Wall
+          <WallMemo
             key={`h-${x}-${y}`}
             isHorizontal
             style={{
@@ -174,7 +253,7 @@ const Maze = ({ zoom, wallDensity }) => {
       {/* Render vertical walls */}
       {walls.vertical.map((row, y) =>
         row.map((wall, x) => wall && (
-          <Wall
+          <WallMemo
             key={`v-${x}-${y}`}
             style={{
               left: x * CELL_SIZE - WALL_THICKNESS/2,
