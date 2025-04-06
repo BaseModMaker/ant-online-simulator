@@ -10,6 +10,7 @@ import ZoomOutMapIcon from '@mui/icons-material/ZoomOutMap';
 import CenterFocusStrongIcon from '@mui/icons-material/CenterFocusStrong';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
+import RemoveRedEyeIcon from '@mui/icons-material/RemoveRedEye';
 
 // Replace with MUI GlobalStyles
 const globalStyles = {
@@ -114,7 +115,9 @@ const Sidebar = ({
   onCenterMap,
   isMapCentered,
   showCollisionSpheres,
-  onToggleCollisionSpheres
+  onToggleCollisionSpheres,
+  showVisionCones,
+  onToggleVisionCones
 }) => {
   const [open, setOpen] = React.useState(false);
   const isZoomed = zoom !== 1;
@@ -203,6 +206,13 @@ const Sidebar = ({
               startIcon={showCollisionSpheres ? <VisibilityOffIcon /> : <VisibilityIcon />}
             >
               {showCollisionSpheres ? "Hide" : "Show"} Collision Spheres
+            </ResetButton>
+            <ResetButton
+              variant="contained"
+              onClick={onToggleVisionCones}
+              startIcon={showVisionCones ? <VisibilityOffIcon /> : <RemoveRedEyeIcon />}
+            >
+              {showVisionCones ? "Hide" : "Show"} Vision Cones
             </ResetButton>
           </SliderContainer>
         </Controls>

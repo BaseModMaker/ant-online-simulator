@@ -16,6 +16,26 @@ const PINK_MAX_DURATION = 5000; // 5 seconds max allowed in pink state
 const PINK_PERCENTAGE_THRESHOLD = 0.9; // 90% threshold for phase changing
 const PINK_MONITORING_WINDOW = 6000; // 6 second window for monitoring percentage
 
+// Convert Cartesian coordinates to polar coordinates
+const cartesianToPolar = (x, y, originX, originY) => {
+  const deltaX = x - originX;
+  const deltaY = y - originY;
+  const radius = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+  let theta = Math.atan2(deltaY, deltaX) * 180 / Math.PI;
+  if (theta < 0) {
+    theta += 360;
+  }
+  return { radius, theta };
+};
+
+// Convert polar coordinates to Cartesian
+const polarToCartesian = (radius, theta, originX, originY) => {
+  const radians = theta * Math.PI / 180;
+  const x = originX + radius * Math.cos(radians);
+  const y = originY + radius * Math.sin(radians);
+  return { x, y };
+};
+
 const MazeContainer = styled('div')(({ zoom, panX, panY }) => ({
   position: 'fixed',
   top: '50%',
@@ -129,7 +149,15 @@ function generateBaseMaze(width, height) {
   };
 }
 
-const Maze = ({ zoom, wallDensity, onPanChange, initialPanX = 0, initialPanY = 0, showCollisionSpheres = false }) => {
+const Maze = ({ 
+  zoom, 
+  wallDensity, 
+  onPanChange, 
+  initialPanX = 0, 
+  initialPanY = 0, 
+  showCollisionSpheres = false,
+  showVisionCones = false // Add new prop
+}) => {
   const [isDragging, setIsDragging] = useState(false);
   const [panPosition, setPanPosition] = useState({ x: initialPanX, y: initialPanY });
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
@@ -287,7 +315,7 @@ const Maze = ({ zoom, wallDensity, onPanChange, initialPanX = 0, initialPanY = 0
     }
     
     for (let offsetX = -10; offsetX <= 10; offsetX += 5) {
-      for (let offsetY = -10; offsetY <= 10; ) {
+      for (let offsetY = -10; offsetY <= 10; offsetY += 5) {
         const testX = centerX + offsetX;
         const testY = centerY + offsetY;
         if (!isAntStuck({ x: testX, y: testY })) {
@@ -323,15 +351,18 @@ const Maze = ({ zoom, wallDensity, onPanChange, initialPanX = 0, initialPanY = 0
       // If the other ant is phasing, it shouldn't block this ant's movement
       if (otherAnt.phasing) return false;
       
+      // Convert otherAnt's polar coordinates to Cartesian for distance calculation
+      const otherAntPos = polarToCartesian(otherAnt.radius, otherAnt.theta, width * CELL_SIZE / 2, height * CELL_SIZE / 2);
+      
       // Calculate distance between ants
-      const dx = newPosition.x - otherAnt.position.x;
-      const dy = newPosition.y - otherAnt.position.y;
+      const dx = newPosition.x - otherAntPos.x;
+      const dy = newPosition.y - otherAntPos.y;
       const distance = Math.sqrt(dx * dx + dy * dy);
       
       // Collision detected if distance is less than the combined radii
       return distance < COLLISION_RADIUS * 1.5;
     });
-  }, [ants]);
+  }, [ants, width, height]);
 
   // Add function to check if a wall crosses between two points
   const isWallBetweenPoints = useCallback((point1, point2) => {
@@ -409,38 +440,45 @@ const Maze = ({ zoom, wallDensity, onPanChange, initialPanX = 0, initialPanY = 0
     if (ants.length === 0 && walls.horizontal.length > 0) {
       const newAnts = [];
       
+      // Define origin point (center of screen)
+      const originX = width * CELL_SIZE / 2;
+      const originY = height * CELL_SIZE / 2;
+      
       // Define a single starting position (center of the maze)
       const centerCellX = Math.floor(width / 2);
       const centerCellY = Math.floor(height / 2);
       const startX = centerCellX * CELL_SIZE + CELL_SIZE/2;
       const startY = centerCellY * CELL_SIZE + CELL_SIZE/2;
       
-      // Check if center position is valid, otherwise find nearest safe spot
+      // Convert to polar coordinates
+      const startPolar = cartesianToPolar(startX, startY, originX, originY);
+      
+      // Check if center position is valid
       let startPosition;
       if (isValidPosition(startX, startY, COLLISION_RADIUS)) {
-        startPosition = { x: startX, y: startY };
+        startPosition = { ...startPolar };
       } else {
-        // Use findSafeLocation to get a valid position
-        startPosition = findSafeLocation({ x: startX, y: startY });
+        // Find a safe location and convert to polar
+        const safeCartesian = findSafeLocation({ x: startX, y: startY });
+        startPosition = cartesianToPolar(safeCartesian.x, safeCartesian.y, originX, originY);
       }
       
-      console.log("Spawning all ants at:", startPosition);
+      console.log("Spawning all ants at polar:", startPosition);
       
-      // Create all ants at the same position but with different directions
+      // Create ants with polar coordinates
       for (let i = 0; i < ANT_COUNT; i++) {
-        // Give each ant a different direction (spread around 360 degrees)
         const direction = (i * (360 / ANT_COUNT)) % 360;
         
         newAnts.push({
           id: i,
-          position: { ...startPosition }, // Clone position to avoid reference issues
+          radius: startPosition.radius,
+          theta: startPosition.theta,
           direction: direction,
-          velocity: { x: 0, y: 0 },
-          phasing: false, // Add phasing property to track collision state
+          phasing: false,
           wallBetweenPoints: false,
           insideWall: false,
-          pinkSince: null, // Timestamp when ant first entered pink state
-          pinkHistory: [], // Array of [timestamp, isPink] entries
+          pinkSince: null,
+          pinkHistory: [],
         });
       }
       
@@ -448,59 +486,57 @@ const Maze = ({ zoom, wallDensity, onPanChange, initialPanX = 0, initialPanY = 0
     }
   }, [walls, width, height, ants.length, isValidPosition, findSafeLocation]);
 
-  // Update the ant movement logic to track wall-between-points
+  // Update movement logic for polar coordinates
   useEffect(() => {
     if (ants.length === 0) return;
+    
+    const originX = width * CELL_SIZE / 2;
+    const originY = height * CELL_SIZE / 2;
     
     const moveInterval = setInterval(() => {
       const now = Date.now();
       
       setAnts(currentAnts => {
         return currentAnts.map(ant => {
+          // Convert polar to Cartesian for calculations
+          const cartPos = polarToCartesian(ant.radius, ant.theta, originX, originY);
+          
           // Determine if ant is currently stuck or has wall between points
-          const isStuck = isAntStuck(ant.position);
-          const wallBetweenPoints = hasWallBetweenPoints(ant.position);
+          const isStuck = isAntStuck(cartPos);
+          const wallBetweenPoints = hasWallBetweenPoints(cartPos);
           
-          // Check if pink state just started
+          // Pink state tracking logic remains the same
           const justTurnedPink = wallBetweenPoints && !ant.wallBetweenPoints;
-          // Check if pink state just ended
           const justEndedPink = !wallBetweenPoints && ant.wallBetweenPoints;
-          
-          // Update pink tracking
           let pinkSince = ant.pinkSince;
           let pinkHistory = [...ant.pinkHistory];
           
-          // Record new pink state in history
+          // Update pink tracking (same as before)
           pinkHistory.push([now, wallBetweenPoints]);
-          
-          // Remove entries older than monitoring window
           const cutoffTime = now - PINK_MONITORING_WINDOW;
           pinkHistory = pinkHistory.filter(entry => entry[0] >= cutoffTime);
           
-          // Update pink start time
           if (justTurnedPink) {
             pinkSince = now;
           } else if (justEndedPink) {
             pinkSince = null;
           }
           
-          // Calculate pink percentage over monitoring window
           const pinkDuration = pinkHistory.filter(entry => entry[1]).length;
           const pinkPercentage = pinkHistory.length > 0 ? pinkDuration / pinkHistory.length : 0;
           
-          // Check if we should force phasing due to pink state
           const pinkTooLong = pinkSince !== null && (now - pinkSince > PINK_MAX_DURATION);
           const pinkTooFrequent = pinkPercentage > PINK_PERCENTAGE_THRESHOLD && pinkHistory.length > 10;
           
-          // If pink for too long or too frequent, force phasing mode
+          // Phasing state determination remains similar
           let phasing = ant.phasing || isStuck;
           let direction = ant.direction;
           if ((pinkTooLong || pinkTooFrequent) && wallBetweenPoints) {
             phasing = true;
-            // Pick a random direction to help escape
             direction = Math.floor(Math.random() * 360);
           }
           
+          // Random direction changes remain similar
           if (phasing) {
             if (Math.random() < 0.35) {
               direction = Math.floor(Math.random() * 360);
@@ -512,23 +548,33 @@ const Maze = ({ zoom, wallDensity, onPanChange, initialPanX = 0, initialPanY = 0
             }
           }
           
+          // Calculate movement in polar coordinates
           const speedMultiplier = phasing ? 1.5 : 1.0;
-          const radians = direction * Math.PI / 180;
-          const velocityX = Math.cos(radians) * ANT_SPEED * speedMultiplier;
-          const velocityY = Math.sin(radians) * ANT_SPEED * speedMultiplier;
+          const moveDistance = ANT_SPEED * speedMultiplier;
+          const moveDirRadians = direction * Math.PI / 180;
           
-          const newPosition = {
-            x: ant.position.x + velocityX,
-            y: ant.position.y + velocityY
-          };
+          // First convert to Cartesian movement
+          const moveX = Math.cos(moveDirRadians) * moveDistance;
+          const moveY = Math.sin(moveDirRadians) * moveDistance;
           
-          // Check if new position will have wall between points
-          const newWallBetweenPoints = hasWallBetweenPoints(newPosition);
+          // Calculate new Cartesian position
+          const newCartX = cartPos.x + moveX;
+          const newCartY = cartPos.y + moveY;
           
-          // Rest of the collision handling remains the same
-          const isValid = phasing ? true : isValidPosition(newPosition.x, newPosition.y, COLLISION_RADIUS);
-          const hasAntCollision = phasing ? false : checkAntCollision(ant, newPosition);
+          // Convert back to polar
+          const newPolar = cartesianToPolar(newCartX, newCartY, originX, originY);
           
+          // Collision checks in Cartesian space
+          const newCartPos = { x: newCartX, y: newCartY };
+          const newWallBetweenPoints = hasWallBetweenPoints(newCartPos);
+          
+          const isValid = phasing ? true : isValidPosition(newCartX, newCartY, COLLISION_RADIUS);
+          const hasAntCollision = phasing ? false : checkAntCollision(
+            { id: ant.id, position: cartPos }, 
+            newCartPos
+          );
+          
+          // Handle collisions (similar to before but using Cartesian temporarily)
           if (!phasing && (!isValid || hasAntCollision)) {
             const possibleDirections = [];
             
@@ -539,16 +585,17 @@ const Maze = ({ zoom, wallDensity, onPanChange, initialPanX = 0, initialPanY = 0
               const testVelocityY = Math.sin(testRadians) * ANT_SPEED;
               
               const testPosition = {
-                x: ant.position.x + testVelocityX,
-                y: ant.position.y + testVelocityY
+                x: cartPos.x + testVelocityX,
+                y: cartPos.y + testVelocityY
               };
               
               if (isValidPosition(testPosition.x, testPosition.y, COLLISION_RADIUS) && 
-                  !checkAntCollision(ant, testPosition)) {
+                  !checkAntCollision({ id: ant.id, position: cartPos }, testPosition)) {
                 possibleDirections.push(testDirection);
               }
             }
             
+            // Return new state based on available directions
             if (possibleDirections.length > 0) {
               const newDirection = possibleDirections[Math.floor(Math.random() * possibleDirections.length)];
               return {
@@ -572,18 +619,21 @@ const Maze = ({ zoom, wallDensity, onPanChange, initialPanX = 0, initialPanY = 0
             }
           }
           
+          // Check if phasing can be turned off
           if (phasing) {
-            const nowValid = isValidPosition(newPosition.x, newPosition.y, COLLISION_RADIUS);
-            const nowNoCollision = !checkAntCollision(ant, newPosition);
+            const nowValid = isValidPosition(newCartX, newCartY, COLLISION_RADIUS);
+            const nowNoCollision = !checkAntCollision({ id: ant.id, position: cartPos }, newCartPos);
             
             if (nowValid && nowNoCollision) {
               phasing = false;
             }
           }
           
+          // Return updated ant with polar coordinates
           return {
             ...ant,
-            position: newPosition,
+            radius: newPolar.radius,
+            theta: newPolar.theta,
             direction,
             phasing,
             wallBetweenPoints: newWallBetweenPoints,
@@ -595,7 +645,7 @@ const Maze = ({ zoom, wallDensity, onPanChange, initialPanX = 0, initialPanY = 0
     }, ANT_MOVE_INTERVAL);
     
     return () => clearInterval(moveInterval);
-  }, [ants.length, isValidPosition, checkAntCollision, isAntStuck, hasWallBetweenPoints]);
+  }, [ants.length, isValidPosition, checkAntCollision, isAntStuck, hasWallBetweenPoints, width, height]);
 
   return (
     <MazeContainer 
@@ -645,14 +695,18 @@ const Maze = ({ zoom, wallDensity, onPanChange, initialPanX = 0, initialPanY = 0
         <Ant
           key={`ant-${ant.id}`}
           id={ant.id}
-          position={ant.position}
+          radius={ant.radius}
+          theta={ant.theta}
           rotation={ant.direction}
           width={ANT_SIZE}
           height={ANT_SIZE}
           showCollisionSphere={showCollisionSpheres}
+          showVisionCone={showVisionCones}
           phasing={ant.phasing}
           insideWall={ant.insideWall}
           wallBetweenPoints={ant.wallBetweenPoints}
+          originX={width * CELL_SIZE / 2}
+          originY={height * CELL_SIZE / 2}
         />
       ))}
     </MazeContainer>

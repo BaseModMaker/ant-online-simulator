@@ -8,6 +8,7 @@ const Homepage = () => {
   const [wallDensity, setWallDensity] = useState(50);
   const [panPosition, setPanPosition] = useState({ x: 0, y: 0 });
   const [showCollisionSpheres, setShowCollisionSpheres] = useState(false);
+  const [showVisionCones, setShowVisionCones] = useState(false); // Add vision cone state
   const frameRef = useRef();
   const prevTimeRef = useRef(0);
 
@@ -47,6 +48,10 @@ const Homepage = () => {
     setShowCollisionSpheres(prev => !prev);
   }, []);
 
+  const handleToggleVisionCones = useCallback(() => {
+    setShowVisionCones(prev => !prev);
+  }, []);
+
   // Set a more reasonable threshold - 5 might be too small
   const isMapCentered = Math.abs(panPosition.x) < 10 && Math.abs(panPosition.y) < 10;
 
@@ -76,6 +81,7 @@ const Homepage = () => {
         wallDensity={wallDensity}
         onPanChange={setPanPosition}
         showCollisionSpheres={showCollisionSpheres}
+        showVisionCones={showVisionCones} // Pass vision cone state
       />
       <Sidebar
         zoom={zoom}
@@ -86,6 +92,8 @@ const Homepage = () => {
         isMapCentered={isMapCentered}
         showCollisionSpheres={showCollisionSpheres}
         onToggleCollisionSpheres={handleToggleCollisionSpheres}
+        showVisionCones={showVisionCones} // Pass vision cone state
+        onToggleVisionCones={handleToggleVisionCones} // Pass toggle function
       />
     </BlueprintBackground>
   );
