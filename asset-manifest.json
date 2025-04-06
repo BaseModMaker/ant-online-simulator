@@ -1,15 +1,15 @@
 {
   "files": {
     "main.css": "/ant-online-simulator/static/css/main.b56039b7.css",
-    "main.js": "/ant-online-simulator/static/js/main.5640750c.js",
+    "main.js": "/ant-online-simulator/static/js/main.3d962900.js",
     "static/js/453.b439d4df.chunk.js": "/ant-online-simulator/static/js/453.b439d4df.chunk.js",
     "index.html": "/ant-online-simulator/index.html",
     "main.b56039b7.css.map": "/ant-online-simulator/static/css/main.b56039b7.css.map",
-    "main.5640750c.js.map": "/ant-online-simulator/static/js/main.5640750c.js.map",
+    "main.3d962900.js.map": "/ant-online-simulator/static/js/main.3d962900.js.map",
     "453.b439d4df.chunk.js.map": "/ant-online-simulator/static/js/453.b439d4df.chunk.js.map"
   },
   "entrypoints": [
     "static/css/main.b56039b7.css",
-    "static/js/main.5640750c.js"
+    "static/js/main.3d962900.js"
   ]
 }
